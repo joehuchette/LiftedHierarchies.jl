@@ -2,7 +2,7 @@ module LiftedHierarchies
 
 using JuMP, Iterators
 
-export lovasz_schrijver, lovasz_schrijver_plus, sherali_adams
+export lovasz_schrijver, lovasz_schrijver_plus, sherali_adams, lasserre
 
 lovasz_schrijver(m::Model) = lovasz_schrijver!(copy(m))
 
@@ -224,6 +224,91 @@ function sherali_adams!(m::Model, level::Int)
             end
         end
     end
+
+    m
+end
+
+lasserre(m::Model, level::Int) = lasserre!(copy(m), level)
+
+function lasserre!(m::Model, level::Int)
+    var_idx  = 1:m.numCols
+    bin_idx  = filter(x -> (m.colCat[x] == :Bin),  var_idx)
+    cont_idx = filter(x -> (m.colCat[x] == :Cont), var_idx)
+    variables  = [Variable(m,i) for i in var_idx]
+    binaries   = [Variable(m,i) for i in  bin_idx]
+    continuous = [Variable(m,i) for i in cont_idx]
+
+    # @assert union(cont_idx,bin_idx) == var_idx
+
+    isempty(bin_idx) && return m
+
+    old_linconstr = copy(m.linconstr)
+    empty!(m.linconstr)
+
+    bin_sets = Any[]
+    for k in 0:level, sset in subsets(bin_idx,k)
+        push!(bin_sets, sset)
+    end
+    sets = copy(bin_sets)
+    for k in (level+1):(2level), sset in subsets(bin_idx,k)
+        push!(sets, sset)
+    end
+    for k in 0:level, sset in subsets(bin_idx,k), ci in cont_idx
+        push!(sets, sort([sset;ci]))
+    end
+    for sset in subsets(bin_idx,level+1)
+        push!(sets, sset)
+    end
+
+    @defVar(m, Y[sets])
+
+    @addConstraint(m, Y[Int[]] == 1)
+    for i in var_idx
+        @addConstraint(m, Y[[i]] == Variable(m,i))
+    end
+
+    for k in 0:min(level,length(bin_idx)), I in subsets(bin_idx, k)
+        for S in subsets(I)
+            T = setdiff(I, S)
+            for con in old_linconstr
+                if con.lb != -Inf
+                    @addConstraint(m, sum{ (-1)^(length(T′)) *
+                                          (sum{ aᵢ * Y[sort!(union(S,T′,vᵢ.col))], (aᵢ,vᵢ) in zip(con.terms.coeffs,con.terms.vars)} -
+                                          con.lb * Y[sort!(union(S,T′))]),
+                                          k in 0:length(T), T′ in combinations(T,k)} ≥ 0)
+                end
+                if con.ub != Inf
+                    @addConstraint(m, sum{ (-1)^(length(T′)) *
+                                          (sum{ aᵢ * Y[sort!(union(S,T′,vᵢ.col))], (aᵢ,vᵢ) in zip(con.terms.coeffs,con.terms.vars)} -
+                                          con.ub * Y[sort!(union(S,T′))]),
+                                          k in 0:length(T), T′ in combinations(T,k)} ≤ 0)
+                end
+            end
+            for i in var_idx
+                lb, ub = m.colLower[i], m.colUpper[i]
+                if lb != -Inf
+                    @addConstraint(m, sum{ (-1)^(length(T′)) *
+                                          (Y[sort!(union(S,T′,i))] -
+                                          lb * Y[sort!(union(S,T′))]),
+                                          k in 0:length(T), T′ in combinations(T,k)} ≥ 0)
+                end
+                if ub != Inf
+                    @addConstraint(m, sum{ (-1)^(length(T′)) *
+                                          (Y[sort!(union(S,T′,i))] -
+                                          ub * Y[sort!(union(S,T′))]),
+                                          k in 0:length(T), T′ in combinations(T,k)} ≤ 0)
+                end
+            end
+        end
+    end
+
+    p = length(bin_sets)
+    M = Array(Variable, p, p)
+    for (i1,s1) in enumerate(bin_sets), (i2,s2) in enumerate(bin_sets)
+        I = intersect(bin_idx, union(s1,s2))
+        M[i1,i2] = Y[sort!(I)]
+    end
+    @addSDPConstraint(m, M ≥ 0)
 
     m
 end
