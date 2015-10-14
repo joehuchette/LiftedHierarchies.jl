@@ -69,7 +69,6 @@ function lovasz_schrijver!(m::Model)
     end
 
     empty!(m.quadconstr)
-    # fill!(m.colCat, :Cont)
 
     m
 end
@@ -139,7 +138,6 @@ function lovasz_schrijver_plus!(m::Model)
     end
 
     empty!(m.quadconstr)
-    # fill!(m.colCat, :Cont)
 
     Y = Array(AffExpr, length(bin_idx)+1, length(bin_idx)+1)
     Y[1,1] = 1
@@ -187,11 +185,12 @@ function sherali_adams!(m::Model, level::Int)
 
     @defVar(m, Y[sets])
 
+    @addConstraint(m, Y[Int[]] == 1)
     for i in var_idx
         @addConstraint(m, Y[[i]] == Variable(m,i))
     end
 
-    for k in 1:min(level,length(bin_idx)), I in subsets(bin_idx, k)
+    for k in 0:min(level,length(bin_idx)), I in subsets(bin_idx, k)
         for S in subsets(I)
             T = setdiff(I, S)
             for con in old_linconstr
